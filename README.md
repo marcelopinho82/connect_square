@@ -21,17 +21,17 @@ A série histórica é construída automaticamente a partir da leitura e consoli
 Downloads/
 ├── app.py                     # Interface gráfica Streamlit, KPIs, gráficos e abas analíticas
 ├── README.md                  # Documentação completa da aplicação
+├── requirements.txt           # Dependências do projeto (streamlit, pandas, plotly, openpyxl)
 ├── arquivos/                  # Diretório de entrada dos arquivos XLSX (Tesouro) e CSV (Patrimar)
 └── tesouro_gap/
     ├── __init__.py
     ├── models.py              # Modelos de dados imutáveis (RegistroDiario, PontoHistorico)
     ├── processor.py           # GapProcessor: deduplicação diária, consolidação e cálculo do Gap
     ├── utils.py               # Extração de data/hora via regex e formatação monetária (pt-BR)
-    ├── readers/
-    │   ├── __init__.py        # Exportação de leitores
-    │   ├── tesouro_reader.py  # TesouroReader: leitura de extratos XLSX e rentabilidade ponderada
-    │   └── patrimar_reader.py # PatrimarReader: leitura de CSVs e composição do saldo devedor
-    └── requirements.txt       # Dependências do projeto (streamlit, pandas, plotly, openpyxl)
+    └── readers/
+        ├── __init__.py        # Exportação de leitores
+        ├── tesouro_reader.py  # TesouroReader: leitura de extratos XLSX e rentabilidade ponderada
+        └── patrimar_reader.py # PatrimarReader: leitura de CSVs e composição do saldo devedor
 ```
 
 ---
@@ -51,8 +51,9 @@ Downloads/
 
 ### 3. Deduplicação e Consolidação Diária
 - **Carimbo temporal**: A data e o horário são extraídos do final do nome de cada arquivo através da expressão regular `AAAA-MM-DD_HH-MM`.
-- **Chave de consolidação**: A data civil (`AAAA-MM-DD`) é a chave de unificação; horários distintos não criam registros adicionais.
-- **Desempate intradia**: Existindo mais de um arquivo da mesma fonte na mesma data, utiliza-se exclusivamente o arquivo de horário mais recente.
+- **Chave de consolidação**: A data civil (`AAAA-MM-DD`) é a chave de unificação; variações de horário não criam registros adicionais.
+- **Tesouro Direto (soma por corretora)**: Existindo mais de um arquivo `ExtratoAnalitico_*` para a mesma data (por exemplo, custódias em corretoras distintas), os valores líquidos de todos são **somados**, consolidando a posição global de NTN-B naquele fechamento.
+- **Patrimar (desempate intradia)**: Existindo mais de um arquivo CSV para a mesma data civil, prevalece estritamente o arquivo de horário mais recente (maior timestamp).
 - **Assimetrias**: Caso uma data possua extrato de apenas uma das fontes, o lado ausente é registrado como `NaN` e o Gap não é computado nessa data.
 - **Ordenação cronológica**: A série final é estritamente ordenada da data mais antiga para a mais recente.
 
@@ -62,13 +63,16 @@ Downloads/
 
 A projeção simula mês a mês a trajetória do patrimônio e da dívida até **31 de julho de 2030**:
 
-1. **Saldo Devedor (INCC)**:
-   - Evolui sob regime de juros compostos diários à taxa anual parametrizada do INCC (padrão: `8,0% a.a.`):
+1. **Saldo Devedor (INCC) e Taxa Implícita**:
+   - **Cálculo automático do INCC Implícito**: O sistema infere a taxa anual equivalente do INCC a partir do saldo histórico usando capitalização composta:
+     $$\text{INCC Implícito} = \left(\frac{SD_{\text{final}}}{SD_{\text{inicial}}}\right)^{\frac{12}{n_{\text{meses}}}} - 1$$
+     O cálculo utiliza como âncora de partida o contrato original assinado em **02/07/2026** no valor de **R$ 239.616,00**, permitindo apurar a taxa real de correção da construtora mesmo com apenas um extrato carregado.
+   - **Evolução projetada**: O saldo devedor evolui sob regime de juros compostos diários à taxa anual parametrizada (padrão alimentado pelo INCC implícito ou fallback de `8,0% a.a.`):
      $$V = V_0 \times (1 + \text{taxa})^{\frac{\text{dias}}{365.25}}$$
 2. **Valor Líquido (Tesouro IPCA+)**:
    - **Taxa Efetiva Híbrida**: Como os títulos IPCA+ são híbridos, a rentabilidade nominal projeta o spread médio contratado composto com a estimativa de inflação (IPCA):
      $$\text{Taxa Efetiva} = (1 + \text{Spread}) \times (1 + \text{IPCA}) - 1$$
-   - **Aporte Mensal**: Aporte programado (padrão: `R$ 1.000,00/mês`) adicionado a cada mês na NTN-B+ 2032, capitalizando à taxa efetiva.
+   - **Aporte Mensal**: Aporte programado (padrão: `R$ 1.500,00/mês`) adicionado a cada mês na NTN-B+ 2032, capitalizando à taxa efetiva.
    - **Aportes Extraordinários (FGTS)**: Crédito do Saque-Aniversário do FGTS (padrão: `R$ 10.000,00`) nas datas contratuais:
      - 10/07/2027
      - 10/07/2028
@@ -80,10 +84,10 @@ A projeção simula mês a mês a trajetória do patrimônio e da dívida até *
 ## 🖥️ Painéis e Recursos da Interface Streamlit
 
 ### Barra Lateral (Parâmetros da Projeção)
-- **INCC (% a.a.)**: Ajuste fino da taxa de correção da dívida da Patrimar.
-- **IPCA (% a.a.)**: Estimativa de inflação para compor o rendimento do Tesouro IPCA+.
-- **Aporte mensal na NTN-B+ 2032 (R$)**: Simulação de aportes mensais recorrentes.
-- **Saque-Aniversário do FGTS (R$)**: Montante creditado anualmente em cada 10 de julho.
+- **INCC (% a.a.)**: Taxa anual de correção da dívida da Patrimar. Pré-preenchida automaticamente com o INCC implícito calculado do histórico real (ou `8,0% a.a.` como referência), com ajuste manual permitido (0 a 50%).
+- **IPCA (% a.a.)**: Estimativa anual de inflação (padrão: `0,0% a.a.`, slider de 0 a 50%) para compor com o spread real do Tesouro IPCA+.
+- **Aporte mensal na NTN-B+ 2032 (R$)**: Simulação de aportes mensais regulares (padrão: `R$ 1.500,00`).
+- **Saque-Aniversário do FGTS (R$)**: Montante creditado anualmente em cada 10 de julho (padrão: `R$ 10.000,00`).
 
 ### Painel Superior de KPIs
 1. **Valor líquido atual**: Posição consolidada mais recente em títulos do Tesouro.
@@ -131,7 +135,7 @@ A projeção simula mês a mês a trajetória do patrimônio e da dívida até *
 cd Downloads
 python3 -m venv .venv
 source .venv/bin/activate      # No Windows: .venv\Scripts\activate
-pip install -r tesouro_gap/requirements.txt
+pip install -r requirements.txt
 ```
 
 ### 2. Executar a aplicação

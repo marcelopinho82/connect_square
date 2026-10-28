@@ -1,4 +1,11 @@
-pandas>=2.2
-openpyxl>=3.1
-streamlit>=1.36
-plotly>=5.22
+# Interface web e componentes visuais do dashboard
+streamlit>=1.36.0
+
+# Manipulação e consolidação de dados financeiros
+pandas>=2.2.0
+
+# Gráficos interativos (curvas, waterfall, gauge, áreas)
+plotly>=5.22.0
+
+# Motor de leitura de arquivos Excel (.xlsx) do Tesouro Direto
+openpyxl>=3.1.0

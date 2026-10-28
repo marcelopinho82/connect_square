@@ -101,7 +101,7 @@ def _formatar_taxa(taxa: float) -> str:
 
 
 def _crescer(valor_inicial: float, taxa_anual: float, dias: int) -> float:
-    """Aplica o regime de capitalização contínua/composta por dias corridos.
+    """Aplica o regime de capitalização composta por dias corridos.
 
     Utiliza a convenção de dias corridos sobre ano comercial médio considerando
     bissextos:
@@ -248,7 +248,7 @@ def _construir_projecao(
 def _construir_grafico(df: pd.DataFrame, projecao: pd.DataFrame) -> go.Figure:
     """Monta o gráfico principal Plotly com as curvas históricas e projetadas.
 
-    Apresenta três séries fundamentais:
+    Apresenta três séries fundamentais e uma linha de meta:
     1. **Valor líquido** (azul): Estoque financeiro real e projetado em NTN-B.
     2. **Saldo devedor** (vermelho): Dívida com a Patrimar real e projetada via INCC.
     3. **Gap (a acumular)** (verde): Montante faltante até a quitação.
@@ -965,7 +965,7 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------------
-    # 3. PROJEÇÃO PATRIMONIAL E DE DÍVIDA
+    # 4. PROJEÇÃO PATRIMONIAL E DE DÍVIDA
     # ------------------------------------------------------------------------
     projecao = _construir_projecao(
         df,
@@ -978,7 +978,7 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------------
-    # 4. PAINEL SUPERIOR DE MÉTRICAS (KPIS)
+    # 5. PAINEL SUPERIOR DE MÉTRICAS (KPIS)
     # ------------------------------------------------------------------------
     ultimo = df.iloc[-1]
     valor_liquido = ultimo["valor_liquido"]
@@ -1055,12 +1055,12 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------------
-    # 5. GRÁFICO PRINCIPAL TEMPORAL
+    # 6. GRÁFICO PRINCIPAL TEMPORAL
     # ------------------------------------------------------------------------
     st.plotly_chart(_construir_grafico(df, projecao), width="stretch")
 
     # ------------------------------------------------------------------------
-    # 6. ABAS ANALÍTICAS AVANÇADAS
+    # 7. ABAS ANALÍTICAS AVANÇADAS
     # ------------------------------------------------------------------------
     tab1, tab2, tab3, tab4 = st.tabs([
         "🎯 Estou no caminho?",
@@ -1108,7 +1108,7 @@ def main() -> None:
         _construir_tabela_delta(df, projecao)
 
     # ------------------------------------------------------------------------
-    # 7. TABELA HISTÓRICA CONSOLIDADA E PROJETADA
+    # 8. TABELA HISTÓRICA CONSOLIDADA E PROJETADA
     # ------------------------------------------------------------------------
     st.subheader("Tabela histórica e projeção")
     df_real = df.copy()
