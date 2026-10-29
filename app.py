@@ -713,14 +713,17 @@ def _exibir_resumo_waterfall(df: pd.DataFrame) -> None:
     }
 
     # Aplicação de estilo condicional verde para redução e vermelho para aumento do gap
-    def _color_gap(val):
+    def _color_gap(val):     
         if pd.isna(val):
             return ""
         if val > 0:
-            return "background-color:#E8F5E9"
+            # Verde claro com fonte verde escura
+            return "background-color: #E8F5E9; color: #1B5E20;"
         elif val < 0:
-            return "background-color:#FDECEA"
-        return ""
+            # Vermelho claro com fonte vermelha escura
+            return "background-color: #FDECEA; color: #B71C1C;"
+        # Valores zerados: fundo neutro e fonte escura
+        return "background-color: #F5F5F5; color: #212121;"
 
     styled = resumo.style.format(fmt).applymap(_color_gap, subset=["Gap variou"])
     st.write(styled)
