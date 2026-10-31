@@ -306,22 +306,26 @@ class TesouroReader:
             )
         return registros
 
-    def obter_taxa_media_contratada(self, arquivo: Path) -> float:
-        """Calcula a taxa média ponderada contratada (a.a.) da carteira no arquivo.
+    def _extrair_taxas_e_pesos(
+        self, arquivo: Path
+    ) -> tuple[pd.Series, pd.Series]:
+        """Extrai as taxas contratadas e os respectivos pesos (valor investido) de um arquivo.
 
-        Calcula a média ponderada das taxas anuais (spreads contratados) de cada título,
-        utilizando como peso o ``Valor investido`` em cada aplicação. A linha de
-        TOTAL é desconsiderada para não duplicar valores.
+        Retorna apenas as linhas de títulos individuais (exclui a linha de TOTAL)
+        que possuam taxa contratada legível. O peso de cada título corresponde ao
+        ``Valor investido``; quando a coluna de valor investido não existir ou for
+        ilegível, o peso é preenchido com ``NaN`` para que a agregação recorra à
+        média aritmética simples.
 
         Args:
-            arquivo: Caminho do arquivo XLSX de onde calcular as taxas.
+            arquivo: Caminho do arquivo XLSX de onde extrair as taxas.
 
         Returns:
-            Taxa anual ponderada como fração decimal (ex.: 0.0825 para 8,25% a.a.).
+            Tupla ``(taxas, pesos)`` de séries pandas alinhadas por posição.
 
         Raises:
-            ValueError: Se a coluna de rentabilidade não estiver disponível ou
-                não houver taxas numéricas legíveis.
+            ValueError: Se a coluna de rentabilidade não estiver disponível ou não
+                houver taxas numéricas legíveis no arquivo.
         """
         df = self.ler_planilha(arquivo)
 
@@ -343,7 +347,7 @@ class TesouroReader:
         mask_total = df.apply(_linha_eh_total, axis=1)
         dados = df.loc[~mask_total]
 
-        # Extrai os percentuais anuais
+        # Extrai os percentuais anuais e retém apenas as linhas com taxa legível
         taxas = dados[coluna_rentabilidade].map(_extrair_percentual_ao_ano)
         validos = taxas.notna()
         taxas = taxas[validos]
@@ -352,7 +356,7 @@ class TesouroReader:
                 f"Nenhuma taxa contratada válida encontrada em {arquivo.name}."
             )
 
-        # Tenta ponderar pelo valor investido em cada título
+        # Associa o valor investido de cada título como peso (ou NaN se indisponível)
         coluna_investido = next(
             (
                 coluna
@@ -363,18 +367,75 @@ class TesouroReader:
         )
         if coluna_investido is not None:
             pesos = dados.loc[validos, coluna_investido].map(_converter_numero_br)
-            pesos = pesos.fillna(0.0)
-            if pesos.sum() > 0:
-                return float((taxas * pesos).sum() / pesos.sum())
+        else:
+            pesos = pd.Series(float("nan"), index=taxas.index)
 
-        # Caso não haja coluna de valor investido legível, retorna a média aritmética simples
+        return taxas.reset_index(drop=True), pesos.reset_index(drop=True)
+
+    def _consolidar_taxa_media(self, arquivos: list[Path]) -> float:
+        """Calcula a taxa média ponderada contratada agregando MÚLTIPLOS arquivos.
+
+        Concatena os títulos de todos os arquivos informados (ex.: um extrato por
+        conta/corretora referente à mesma data) e calcula a média das taxas anuais
+        (spreads contratados) ponderada pelo ``Valor investido`` em cada papel.
+        Dessa forma, quando há mais de um extrato para a mesma data de referência,
+        todas as contas contribuem proporcionalmente ao capital investido — em
+        consistência com a soma dos valores líquidos realizada na série histórica.
+
+        Args:
+            arquivos: Lista de caminhos de arquivos XLSX a consolidar.
+
+        Returns:
+            Taxa anual ponderada como fração decimal (ex.: 0.0784 para 7,84% a.a.).
+
+        Raises:
+            ValueError: Se nenhum dos arquivos fornecer taxas contratadas válidas.
+        """
+        taxas_partes: list[pd.Series] = []
+        pesos_partes: list[pd.Series] = []
+        for arquivo in arquivos:
+            taxas, pesos = self._extrair_taxas_e_pesos(arquivo)
+            taxas_partes.append(taxas)
+            pesos_partes.append(pesos)
+
+        taxas = pd.concat(taxas_partes, ignore_index=True)
+        pesos = pd.concat(pesos_partes, ignore_index=True)
+
+        # Pondera pelo valor investido total; se os pesos forem indisponíveis
+        # (todos NaN/zero), recorre à média aritmética simples das taxas.
+        pesos = pesos.fillna(0.0)
+        if pesos.sum() > 0:
+            return float((taxas * pesos).sum() / pesos.sum())
         return float(taxas.mean())
 
-    def obter_taxa_media_mais_recente(self) -> float | None:
-        """Obtém a taxa média ponderada contratada do extrato analítico mais recente.
+    def obter_taxa_media_contratada(self, arquivo: Path) -> float:
+        """Calcula a taxa média ponderada contratada (a.a.) da carteira em um arquivo.
 
-        Identifica o arquivo com maior carimbo de data/hora (mais recente) e extrai
-        a rentabilidade contratada média da carteira para alimentar as projeções.
+        Calcula a média ponderada das taxas anuais (spreads contratados) de cada título,
+        utilizando como peso o ``Valor investido`` em cada aplicação. A linha de
+        TOTAL é desconsiderada para não duplicar valores.
+
+        Args:
+            arquivo: Caminho do arquivo XLSX de onde calcular as taxas.
+
+        Returns:
+            Taxa anual ponderada como fração decimal (ex.: 0.0825 para 8,25% a.a.).
+
+        Raises:
+            ValueError: Se a coluna de rentabilidade não estiver disponível ou
+                não houver taxas numéricas legíveis.
+        """
+        return self._consolidar_taxa_media([arquivo])
+
+    def obter_taxa_media_mais_recente(self) -> float | None:
+        """Obtém a taxa média ponderada contratada consolidando os extratos da data mais recente.
+
+        Identifica a data de referência mais recente (ignorando o horário) entre
+        todos os extratos e consolida a rentabilidade contratada de TODOS os
+        arquivos dessa data — um por conta/corretora — ponderando pelo valor
+        investido de cada título. Assim, quando há mais de um extrato para o
+        mês/data vigente, todas as contas são consideradas no cálculo do spread,
+        em consistência com a soma dos valores líquidos.
 
         Returns:
             Taxa anual média em fração decimal, ou ``None`` se nenhum arquivo existir.
@@ -382,6 +443,12 @@ class TesouroReader:
         arquivos = self.localizar_arquivos()
         if not arquivos:
             return None
-        # Encontra o arquivo mais recente com base no carimbo completo extraído do nome
-        mais_recente = max(arquivos, key=lambda a: self.extrair_data(a)[1])
-        return self.obter_taxa_media_contratada(mais_recente)
+
+        # Determina a data de referência mais recente (apenas dia/mês/ano)
+        data_mais_recente = max(self.extrair_data(a)[0] for a in arquivos)
+
+        # Seleciona todos os extratos dessa data (todas as contas/corretoras)
+        arquivos_recentes = [
+            a for a in arquivos if self.extrair_data(a)[0] == data_mais_recente
+        ]
+        return self._consolidar_taxa_media(arquivos_recentes)

@@ -11,12 +11,20 @@ Mecanismo central:
 - O Gap é definido como o montante residual que ainda falta acumular:
       Gap = Saldo devedor - Valor líquido
 - Permite simular a evolução patrimonial e da dívida até a data de entrega das
-  chaves (31/07/2030), parametrizando taxas de inflação (IPCA), correção da obra
+  chaves (parametrizável), ajustando taxas de inflação (IPCA), correção da obra
   (INCC), aportes mensais recorrentes e saques-aniversário anuais do FGTS.
+
+Parametrização:
+- Os valores de negócio (saldo original do contrato, datas contratuais,
+  taxas-padrão, data-limite da projeção e aportes) não ficam fixos no código:
+  são carregados do arquivo ``config.yaml`` na raiz do projeto, via
+  :func:`tesouro_gap.config.carregar_config`. Edite esse arquivo para adaptar o
+  painel a outro contrato/cenário.
 
 Modo de uso:
 - Adicione novos arquivos às pastas correspondentes (XLSX para Tesouro e CSV para Patrimar)
   dentro do diretório ``arquivos/`` e recarregue a página (F5) para recalcular toda a série.
+- Ajuste as premissas de negócio em ``config.yaml`` quando necessário.
 """
 
 from __future__ import annotations
@@ -26,12 +34,18 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from tesouro_gap.config import carregar_config
 from tesouro_gap.processor import GapProcessor
 from tesouro_gap.utils import formatar_moeda
 
 # ============================================================================
 # CONSTANTES E CONFIGURAÇÕES DO SISTEMA
 # ============================================================================
+
+# Parâmetros de negócio carregados do arquivo de configuração externo
+# (``config.yaml`` na raiz do projeto). Centraliza os valores que antes eram
+# fixos no código, permitindo adaptar o painel sem editar o Python.
+_CONFIG = carregar_config()
 
 # Caminho absoluto para a pasta de arquivos brutos (XLSX do Tesouro e CSV da Patrimar)
 DIRETORIO_DADOS = Path(__file__).resolve().parent / "arquivos"
@@ -47,38 +61,38 @@ COR_GAUGE_AMARELO = "#D4A017"   # Âmbar/Amarelo: progresso intermediário (30% 
 COR_GAUGE_VERDE = "#6AAF3D"     # Verde oliva/folha: progresso avançado (> 70%)
 COR_GAUGE_ESCURA = "#1A3A1A"    # Verde escuro/cinza chumbo para linha de saldo total
 
+# ----------------------------------------------------------------------------
+# Parâmetros de negócio (parametrizados em ``config.yaml``)
+# ----------------------------------------------------------------------------
+# Os valores abaixo são lidos do arquivo de configuração externo e deixaram de
+# ser constantes fixas no código. Para alterá-los, edite ``config.yaml``.
+
 # Data de corte contratual e término da projeção (previsão de entrega das chaves)
-DATA_LIMITE_PROJECAO = pd.Timestamp("2030-07-31")
+DATA_LIMITE_PROJECAO = _CONFIG.data_limite_projecao
 
-# Premissa padrão da taxa anual do INCC (% a.a.) para projeção do saldo devedor
-# Usado como fallback quando não há dados históricos suficientes para inferir a taxa real.
-TAXA_PATRIMAR_PADRAO_PCT = 8.0
+# Premissa padrão da taxa anual do INCC (% a.a.) para projeção do saldo devedor.
+# Usada como fallback quando não há dados históricos suficientes para inferir a taxa real.
+TAXA_PATRIMAR_PADRAO_PCT = _CONFIG.taxa_patrimar_padrao_pct
 
-# Saldo devedor original na data de assinatura do contrato com a Patrimar (R$)
-# Valor fixado na data de assinatura; serve de âncora para o cálculo do INCC implícito
-# mesmo quando há apenas um extrato mensal carregado.
-SALDO_CONTRATO_INICIAL = 239_616.0
+# Saldo devedor original na data de assinatura do contrato com a Patrimar (R$).
+# Serve de âncora para o cálculo do INCC implícito mesmo com apenas um extrato carregado.
+SALDO_CONTRATO_INICIAL = _CONFIG.saldo_contrato_inicial
 
 # Data de assinatura do contrato com a Patrimar
-DATA_CONTRATO = pd.Timestamp("2026-07-02")
+DATA_CONTRATO = _CONFIG.data_contrato
 
-# Premissa padrão da taxa anual do IPCA (% a.a.) para títulos Tesouro IPCA+
+# Premissa padrão da taxa anual do IPCA (% a.a.) para títulos Tesouro IPCA+.
 # Os títulos NTN-B rendem o spread contratado composto com a inflação: (1 + spread) * (1 + IPCA) - 1
-IPCA_PADRAO_PCT = 0.0
+IPCA_PADRAO_PCT = _CONFIG.ipca_padrao_pct
 
 # Montante financeiro mensal padrão (R$) destinado a novos aportes em NTN-B+ 2032
-APORTE_MENSAL_PADRAO = 1500.0
+APORTE_MENSAL_PADRAO = _CONFIG.aporte_mensal_padrao
 
-# Cronograma de aportes extraordinários de Saque-Aniversário do FGTS (todo dia 10 de julho)
-DATAS_APORTE_EXTRA = (
-    pd.Timestamp("2027-07-10"),
-    pd.Timestamp("2028-07-10"),
-    pd.Timestamp("2029-07-10"),
-    pd.Timestamp("2030-07-10"),
-)
+# Cronograma de aportes extraordinários de Saque-Aniversário do FGTS
+DATAS_APORTE_EXTRA = _CONFIG.datas_aporte_extra
 
 # Valor padrão (R$) de cada saque-aniversário anual do FGTS projetado
-APORTE_EXTRA_PADRAO = 10000.0
+APORTE_EXTRA_PADRAO = _CONFIG.aporte_extra_padrao
 
 
 # ============================================================================

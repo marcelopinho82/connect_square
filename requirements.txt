@@ -9,3 +9,6 @@ plotly>=5.22.0
 
 # Motor de leitura de arquivos Excel (.xlsx) do Tesouro Direto
 openpyxl>=3.1.0
+
+# Leitura do arquivo de configuração de negócio (config.yaml)
+PyYAML>=5.4

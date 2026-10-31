@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from tesouro_gap.config import carregar_config
 from tesouro_gap.models import RegistroDiario
 from tesouro_gap.utils import extrair_data_hora
 
@@ -30,8 +31,10 @@ TIPO_FINANCIAMENTO = "Financiamento"
 # Identificador da parcela intermediária balão (Poupança) concomitante à quitação.
 TIPO_POUPANCA = "Poupança"
 
-# Data limite padrão da projeção e vencimento da parcela balão da Poupança.
-DATA_LIMITE_POUPANCA = pd.Timestamp("2030-07-31")
+# Data limite da projeção e vencimento da parcela balão da Poupança.
+# Carregada do arquivo de configuração (``config.yaml``) — mesma data de entrega
+# das chaves usada em toda a aplicação, evitando duplicação de valor fixo.
+DATA_LIMITE_POUPANCA = carregar_config().data_limite_projecao
 
 
 class PatrimarReader:

@@ -1,0 +1,51 @@
+# ============================================================================
+# Configuração de negócio — Gap Tesouro Direto × Patrimar
+# ============================================================================
+# Este arquivo externaliza os valores de negócio que antes estavam fixados
+# ("hardcoded") no código-fonte. Edite-o para adaptar o painel a outro
+# contrato/cenário sem precisar alterar o código Python. Após salvar as
+# alterações, pressione F5 no navegador para recalcular toda a série.
+#
+# Observação: datas devem seguir o formato ISO AAAA-MM-DD.
+
+# --- Contrato Patrimar ------------------------------------------------------
+
+# Saldo devedor original (R$) na data de assinatura do contrato com a Patrimar.
+# Serve de âncora de partida para o cálculo do INCC anual implícito, permitindo
+# apurar a taxa real de correção mesmo com apenas um extrato carregado.
+saldo_contrato_inicial: 239616.0
+
+# Data de assinatura do contrato com a Patrimar (AAAA-MM-DD).
+data_contrato: 2026-07-02
+
+# --- Projeção ---------------------------------------------------------------
+
+# Data de corte contratual e término da projeção (previsão de entrega das
+# chaves). É também a data de vencimento da parcela balão de Poupança, que
+# continua sendo corrigida pelo INCC até a quitação definitiva.
+data_limite_projecao: 2030-07-31
+
+# Premissa padrão da taxa anual do INCC (% a.a.) para projeção do saldo devedor.
+# Usada como fallback quando não há dados históricos suficientes para inferir a
+# taxa implícita a partir dos saldos reais.
+taxa_patrimar_padrao_pct: 8.0
+
+# Premissa padrão da taxa anual do IPCA (% a.a.) para compor a rentabilidade do
+# Tesouro IPCA+: (1 + spread) * (1 + IPCA) - 1.
+ipca_padrao_pct: 0.0
+
+# --- Aportes ----------------------------------------------------------------
+
+# Montante mensal padrão (R$) destinado a novos aportes em NTN-B+ 2032.
+aporte_mensal_padrao: 1500.0
+
+# Valor padrão (R$) de cada Saque-Aniversário anual do FGTS projetado.
+aporte_extra_padrao: 10000.0
+
+# Cronograma dos Saques-Aniversário do FGTS (AAAA-MM-DD). Cada aporte passa a
+# render à taxa média do Tesouro a partir da respectiva data.
+datas_aporte_extra:
+  - 2027-07-10
+  - 2028-07-10
+  - 2029-07-10
+  - 2030-07-10
