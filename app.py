@@ -132,6 +132,98 @@ def _crescer(valor_inicial: float, taxa_anual: float, dias: int) -> float:
     return valor_inicial * (1.0 + taxa_anual) ** (dias / 365.25)
 
 
+def _semear_ancora_contrato(
+    df: pd.DataFrame,
+    data_contrato: pd.Timestamp,
+    saldo_contrato: float,
+) -> pd.DataFrame:
+    """Injeta a âncora do contrato como ponto de saldo devedor na ausência de extratos da Patrimar.
+
+    Sem nenhum extrato da Patrimar, o único ponto real conhecido do saldo devedor
+    é o valor original do financiamento na assinatura do contrato. Esta função
+    garante que a série tenha ao menos esse ponto-âncora, permitindo ao painel
+    calcular o Gap e projetar a dívida pelo INCC usando apenas a configuração
+    (editável na barra lateral), sem depender de arquivos da construtora.
+
+    Se já existir uma linha na data do contrato (ex.: proveniente de um extrato do
+    Tesouro), apenas define o seu saldo devedor e preserva o valor líquido
+    existente (assumindo ``0,00`` quando ausente). Caso contrário, acrescenta uma
+    nova linha. Em ambos os casos o Gap é recalculado e a série reordenada.
+
+    Args:
+        df: Série histórica consolidada (possivelmente vazia ou apenas com dados
+            do Tesouro).
+        data_contrato: Data de assinatura do contrato (âncora temporal).
+        saldo_contrato: Saldo devedor original do contrato em reais (R$).
+
+    Returns:
+        Novo DataFrame com a âncora do contrato incorporada e o Gap recalculado.
+    """
+    data = pd.Timestamp(data_contrato).normalize()
+    df = df.copy()
+
+    nova_linha = pd.DataFrame(
+        {
+            "data": [data],
+            "valor_liquido": [0.0],
+            "saldo_devedor": [float(saldo_contrato)],
+            "gap": [float(saldo_contrato)],
+        }
+    )
+
+    if df.empty:
+        # Série vazia (nenhum arquivo): a âncora do contrato é o único ponto.
+        df = nova_linha
+    elif (df["data"] == data).any():
+        # Já há uma linha na data do contrato (ex.: extrato do Tesouro): apenas
+        # define o saldo devedor e preserva o valor líquido existente.
+        mask = df["data"] == data
+        df.loc[mask, "saldo_devedor"] = float(saldo_contrato)
+        df.loc[mask, "valor_liquido"] = df.loc[mask, "valor_liquido"].fillna(0.0)
+    else:
+        df = pd.concat([df, nova_linha], ignore_index=True)
+
+    # Recalcula o Gap e reordena cronologicamente após incorporar a âncora.
+    df["gap"] = df["saldo_devedor"] - df["valor_liquido"]
+    return df.sort_values("data").reset_index(drop=True)
+
+
+def _semear_valor_liquido(
+    df: pd.DataFrame,
+    valor_liquido_atual: float,
+) -> pd.DataFrame:
+    """Ancora o valor líquido no ponto mais recente da série na ausência de extratos do Tesouro.
+
+    Sem nenhum extrato ``ExtratoAnalitico_*``, o valor líquido é tratado como
+    ``0,00`` em todas as datas. Esta função permite testar o painel com um montante
+    fictício já acumulado: sobrescreve o valor líquido do ponto mais recente da
+    série (a "posição atual") com o valor informado na barra lateral, de modo que
+    tanto a KPI "Valor líquido atual" quanto a âncora da projeção partam dele em
+    vez de zero. Os demais pontos históricos permanecem em ``0,00``.
+
+    Não tem efeito quando a série está vazia. O Gap é recalculado após a alteração.
+
+    Args:
+        df: Série histórica consolidada (sem dados reais do Tesouro).
+        valor_liquido_atual: Montante fictício já acumulado em reais (R$) a ser
+            usado como posição atual / âncora da projeção.
+
+    Returns:
+        Novo DataFrame com o valor líquido do ponto mais recente ancorado e o Gap
+        recalculado.
+    """
+    if df.empty:
+        return df
+
+    df = df.copy()
+    idx_atual = df["data"].idxmax()
+    df.loc[idx_atual, "valor_liquido"] = float(valor_liquido_atual)
+
+    # Recalcula o Gap após ancorar o valor líquido.
+    df["gap"] = df["saldo_devedor"] - df["valor_liquido"]
+    return df.sort_values("data").reset_index(drop=True)
+
+
 # ============================================================================
 # MOTOR DE PROJEÇÃO FINANCEIRA
 # ============================================================================
@@ -862,32 +954,99 @@ def main() -> None:
         st.error(f"Falha ao processar os arquivos de dados: {exc}")
         return
 
-    # Validação de presença de dados consolidados
-    if df.empty:
-        st.warning(
-            "Nenhum arquivo encontrado. Adicione os arquivos "
-            "`ExtratoAnalitico_*.xlsx` e `resumo_financeiro-*.csv` na pasta "
-            "`arquivos/` e pressione F5."
-        )
-        return
+    # Presença de dados reais da Patrimar. A ausência de extratos da construtora
+    # deixou de ser bloqueante: o saldo devedor pode ser ancorado no saldo original
+    # do contrato (lido do ``config.yaml`` e editável na barra lateral), permitindo
+    # operar o painel apenas com a configuração — sem nenhum arquivo da Patrimar.
+    tem_patrimar = (not df.empty) and bool(df["saldo_devedor"].notna().any())
 
-    # Inferência do INCC implícito a partir dos saldos devedores mensais históricos.
-    # Usa o saldo original do contrato (jul/2026) como âncora, permitindo calcular
-    # a taxa mesmo com apenas um único arquivo carregado.
-    incc_implicito = processador.calcular_incc_implicito(
-        df,
-        saldo_contrato=SALDO_CONTRATO_INICIAL,
-        data_contrato=DATA_CONTRATO,
-    )
-    incc_implicito_pct = (
-        round(incc_implicito * 100, 2) if incc_implicito is not None else None
-    )
+    if not tem_patrimar:
+        st.info(
+            "Nenhum extrato da Patrimar (`resumo_financeiro-*.csv`) encontrado em "
+            "`arquivos/`. O saldo devedor será ancorado no **saldo inicial do "
+            "contrato** (ajustável na barra lateral) e projetado pelo INCC. "
+            "Adicione extratos e pressione F5 para refletir os valores reais."
+        )
+
+    # Taxa média ponderada do Tesouro (spread contratado), base de rendimento da
+    # projeção. Calculada antecipadamente para também detectar a presença de
+    # extratos do Tesouro: sem nenhum ``ExtratoAnalitico_*``, retorna ``None``.
+    try:
+        taxa_tesouro = processador.obter_taxa_tesouro()
+    except Exception as exc:  # noqa: BLE001
+        taxa_tesouro = None
+        st.warning(f"Não foi possível calcular a taxa média do Tesouro: {exc}")
+
+    # Ausência de extratos do Tesouro deixou de obrigar início em R$ 0,00: o valor
+    # líquido pode ser ancorado em um montante fictício já acumulado, informado na
+    # barra lateral, permitindo simular cenários sem começar do zero.
+    tem_tesouro = taxa_tesouro is not None
+
+    if not tem_tesouro:
+        st.info(
+            "Nenhum extrato do Tesouro (`ExtratoAnalitico_*.xlsx`) encontrado em "
+            "`arquivos/`. O valor líquido parte de R$ 0,00; ajuste o campo "
+            "**Valor líquido atual** na barra lateral para simular um montante já "
+            "acumulado. Adicione extratos e pressione F5 para refletir os valores "
+            "reais."
+        )
 
     # ------------------------------------------------------------------------
     # 2. BARRA LATERAL: ENTRADA DE PARÂMETROS
     # ------------------------------------------------------------------------
     with st.sidebar:
         st.header("Parâmetros da projeção")
+
+        # Saldo devedor original na assinatura do contrato com a Patrimar. Serve de
+        # âncora de partida para inferir o INCC implícito; por isso é editável aqui,
+        # imediatamente antes do campo de INCC, permitindo ao usuário recalibrar a
+        # taxa padrão ao ajustar o valor de origem. O padrão vem do ``config.yaml``.
+        saldo_contrato_inicial = st.number_input(
+            "Saldo inicial do contrato (R$)",
+            min_value=0.0,
+            max_value=100_000_000.0,
+            value=SALDO_CONTRATO_INICIAL,
+            step=1_000.0,
+            help=(
+                "Saldo devedor original (R$) na data de assinatura do contrato com "
+                "a Patrimar. Usado como âncora de partida para inferir o INCC anual "
+                "implícito a partir dos saldos reais. O valor padrão vem do "
+                "`config.yaml`; ajuste-o para recalibrar a taxa de INCC sugerida."
+            ),
+        )
+
+        # Valor líquido fictício já acumulado — exibido SOMENTE quando não há extratos
+        # do Tesouro. Permite testar a projeção partindo de um patrimônio diferente de
+        # zero. Quando há extratos, o valor real prevalece e o campo não aparece.
+        valor_liquido_atual_sim = 0.0
+        if not tem_tesouro:
+            valor_liquido_atual_sim = st.number_input(
+                "Valor líquido atual (R$)",
+                min_value=0.0,
+                max_value=100_000_000.0,
+                value=0.0,
+                step=1_000.0,
+                help=(
+                    "Montante já acumulado (R$) no Tesouro a ser usado como posição "
+                    "atual quando não há extratos (`ExtratoAnalitico_*.xlsx`). A "
+                    "projeção parte deste valor e, sem spread contratado conhecido, "
+                    "rende apenas pelo IPCA informado abaixo. Deixe em R$ 0,00 para "
+                    "começar do zero."
+                ),
+            )
+
+        # Inferência do INCC implícito a partir dos saldos devedores mensais históricos.
+        # Usa o saldo original do contrato (editável acima) como âncora, permitindo
+        # calcular a taxa mesmo com apenas um único arquivo carregado. Recalculado a
+        # cada alteração do saldo inicial para manter o padrão do INCC coerente.
+        incc_implicito = processador.calcular_incc_implicito(
+            df,
+            saldo_contrato=saldo_contrato_inicial,
+            data_contrato=DATA_CONTRATO,
+        )
+        incc_implicito_pct = (
+            round(incc_implicito * 100, 2) if incc_implicito is not None else None
+        )
 
         # Valor padrão do INCC: usa a taxa implícita calculada dos saldos históricos
         # se disponível; caso contrário, recorre ao valor fixo de referência.
@@ -964,22 +1123,35 @@ def main() -> None:
     taxa_patrimar = taxa_patrimar_pct / 100.0
     ipca = ipca_pct / 100.0
 
+    # Sem extratos da Patrimar: ancora o saldo devedor no saldo inicial do contrato
+    # (editável na barra lateral) na data de assinatura, de modo que o painel calcule
+    # o Gap e projete a dívida pelo INCC mesmo sem arquivos da construtora. Como a
+    # semeadura ocorre após a barra lateral, reage ao campo "Saldo inicial do contrato".
+    if not tem_patrimar:
+        df = _semear_ancora_contrato(df, DATA_CONTRATO, saldo_contrato_inicial)
+
+    # Sem extratos do Tesouro: ancora o valor líquido no montante fictício informado
+    # na barra lateral (posição atual), para que a KPI e a projeção partam dele em
+    # vez de zero. Reativo ao campo "Valor líquido atual". Aplicado após a âncora do
+    # contrato para garantir que o ponto mais recente da série já exista.
+    if not tem_tesouro and valor_liquido_atual_sim > 0:
+        df = _semear_valor_liquido(df, valor_liquido_atual_sim)
+
     # ------------------------------------------------------------------------
     # 3. CÁLCULO DAS TAXAS DO TESOURO
     # ------------------------------------------------------------------------
-    # Cálculo da taxa média ponderada dos títulos do Tesouro
-    try:
-        taxa_tesouro = processador.obter_taxa_tesouro()
-    except Exception as exc:  # noqa: BLE001
-        taxa_tesouro = None
-        st.warning(f"Não foi possível calcular a taxa média do Tesouro: {exc}")
-
     # Taxa efetiva do Tesouro IPCA+ composta com a inflação: (1 + spread) * (1 + IPCA) - 1
-    taxa_tesouro_efetiva = (
-        (1.0 + taxa_tesouro) * (1.0 + ipca) - 1.0
-        if taxa_tesouro is not None
-        else None
-    )
+    if taxa_tesouro is not None:
+        taxa_tesouro_efetiva = (1.0 + taxa_tesouro) * (1.0 + ipca) - 1.0
+    else:
+        # Ainda não há nenhum extrato do Tesouro: o spread contratado é desconhecido.
+        # O valor líquido parte do montante informado em "Valor líquido atual" (ou de
+        # R$ 0,00, se não preenchido) e a projeção dos aportes futuros (aporte mensal
+        # + Saques-Aniversário do FGTS) assume spread zero, crescendo apenas pela
+        # inflação (IPCA). Assim a curva do valor líquido projetado deixa de ficar
+        # indefinida (NaN) e passa a refletir a âncora e os aportes configurados — ao
+        # alterar o valor líquido, o aporte mensal ou o FGTS, a projeção é recalculada.
+        taxa_tesouro_efetiva = ipca
 
     # ------------------------------------------------------------------------
     # 4. PROJEÇÃO PATRIMONIAL E DE DÍVIDA
@@ -1034,18 +1206,30 @@ def main() -> None:
         ultimo_gap = float(gaps_serie["gap"].iloc[-1])
         reducao_gap = primeiro_gap - ultimo_gap
 
+        # A "redução" pode ser negativa: sem aplicação no Tesouro (valor líquido = 0),
+        # o gap equivale ao saldo devedor, que cresce pela correção do INCC. Nesse caso
+        # o gap aumentou em vez de encolher. A cor e a seta acompanham o sinal: verde/▼
+        # quando o gap realmente encolheu (favorável) e vermelho/▲ quando cresceu.
+        reduziu = reducao_gap >= 0
+        cor_reducao = COR_GAP if reduziu else COR_SALDO_DEVEDOR
+        seta = "▼" if reduziu else "▲"
+
         col4.markdown("**Gap reduzido desde o início**")
         col4.markdown(
-            f"<span style='font-size:1.9rem;font-weight:700;color:{COR_GAP}'>"
+            f"<span style='font-size:1.9rem;font-weight:700;color:{cor_reducao}'>"
             f"{formatar_moeda(reducao_gap)}</span>",
             unsafe_allow_html=True,
         )
         if primeiro_gap != 0:
             pct_reducao = (reducao_gap / primeiro_gap) * 100
-            pct_txt = f"{pct_reducao:.1f}".replace(".", ",")
+            pct_txt = f"{abs(pct_reducao):.1f}".replace(".", ",")
+            legenda = (
+                f"{pct_txt}% do gap inicial" if reduziu
+                else f"{pct_txt}% de aumento no gap"
+            )
             col4.markdown(
-                f"<span style='color:{COR_GAP};font-weight:600'>"
-                f"▼ {pct_txt}% do gap inicial</span>",
+                f"<span style='color:{cor_reducao};font-weight:600'>"
+                f"{seta} {legenda}</span>",
                 unsafe_allow_html=True,
             )
         data_inicio = gaps_serie["data"].iloc[0]

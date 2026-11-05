@@ -98,6 +98,11 @@ class GapProcessor:
            de data (do mais antigo para o mais recente).
         6. **Tratamento de assimetrias**: Datas presentes apenas em um dos extratos
            recebem ``NaN`` na contraparte ausente e também na coluna ``gap``.
+        7. **Ausência total de extratos do Tesouro**: Quando não existe nenhum
+           arquivo ``ExtratoAnalitico_*`` no diretório, o valor líquido é tratado
+           como ``0,00`` em todas as datas (ainda não há aplicação). Assim o Gap
+           coincide com o próprio saldo devedor e as curvas de aplicação/Gap partem
+           do zero, em vez de resultarem em ``NaN``.
 
         Returns:
             DataFrame com as colunas:
@@ -124,11 +129,23 @@ class GapProcessor:
                 columns=["data", "valor_liquido", "saldo_devedor", "gap"]
             )
 
+        # Ausência total de extratos do Tesouro (nenhum arquivo ``ExtratoAnalitico_*``):
+        # o valor líquido acumulado é, por definição, zero — ainda não há aplicação.
+        # Nesse cenário o valor líquido parte de R$ 0,00 em todas as datas (em vez de
+        # NaN), fazendo o Gap coincidir com o próprio saldo devedor e as curvas da
+        # aplicação/Gap começarem a partir do zero. Quando HÁ extratos, mas uma data
+        # específica não possui o seu, preserva-se ``None`` (NaN) na contraparte
+        # ausente, mantendo a regra de assimetria entre fontes.
+        valor_liquido_default = 0.0 if not valor_liquido_por_data else None
+
         # Monta a estrutura tabular da série
         df = pd.DataFrame(
             {
                 "data": pd.to_datetime(datas),
-                "valor_liquido": [valor_liquido_por_data.get(d) for d in datas],
+                "valor_liquido": [
+                    valor_liquido_por_data.get(d, valor_liquido_default)
+                    for d in datas
+                ],
                 "saldo_devedor": [saldo_devedor_por_data.get(d) for d in datas],
             }
         )
