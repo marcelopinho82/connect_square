@@ -147,7 +147,7 @@ O carregamento e a validação das chaves são feitos por `tesouro_gap/config.py
   - Gráfico cascata (*Waterfall*) mostrando o ganho/perda líquido mensal do gap;
   - Tabela resumo de forças decompondo quanto o Tesouro cresceu, quanto o INCC cresceu e a variação líquida do gap com estilo condicional.
 - 📋 **Evolução mensal**:
-  - Tabela detalhada mês a mês calculando o $\Delta \text{ Gap (R\$)}$ e $\Delta \% \text{ no mês}$;
+  - Tabela detalhada mês a mês calculando o $\Delta$ Gap (R\$) e o $\Delta\%$ no mês;
   - Identificação clara entre períodos Reais e Projetados;
   - Linha final de totalização acumulada.
 
